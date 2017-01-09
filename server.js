@@ -1,11 +1,13 @@
 var express = require("express");
 var request = require("request");
 var bodyParser = require("body-parser");
+var mongodb = require("mongodb").MongoClient;
 var URL = require("url");
 var app = express();
 
 var PORT = process.env.PORT || 8080;
 var API_KEY = process.env.IMAGE_API_KEY;
+var MONGO_URI = process.env.MONGO_URI;
 var API_BASE_URL = 'https://api.cognitive.microsoft.com/bing/v5.0/images/search?count=10&q=';
 
 app.use(bodyParser.urlencoded({ extended: false }));
@@ -21,21 +23,50 @@ app.get('/api/imagesearch/*', function (req, res) {
 });
 
 app.get('/api/latest/imagesearch', function (req, res) {
-    res.send(queries); 
+    mongodb.connect(MONGO_URI, function (err, db) {
+        if (err) {
+            console.error("Couldn't connect to database");
+            return res.send([]);
+        }
+        
+        db.collection('logs').find({}).toArray(function (err, docs) {
+            if (err) return res.send([]);
+            
+            var data = docs.map(doc => {
+                return {
+                    term: doc.term,
+                    when: doc.when
+                };
+            });
+            
+            res.send(data);
+            
+            db.close();
+        });
+    }); 
 });
 
 app.listen(PORT, function () {
     console.log('Server is listening on port: ' + PORT);
 });
 
-var queries = [];
 function saveQuery(query, callback) {
     var searchLog = {
         term: decodeURI(query),
         when: new Date().toISOString()
     };
-    queries.push(searchLog);
-    callback();
+    mongodb.connect(MONGO_URI, function (err, db) {
+        if (err) {
+            console.error("Couldn't connect to database");
+            return callback();
+        }
+        
+        db.collection('logs').insert(searchLog, function (err, result) {
+            if (err) console.error("Couldn't insert the log");
+            callback();
+            db.close();
+        });
+    });
 }
 
 function searchImage(searchTerm, offset, res) {
